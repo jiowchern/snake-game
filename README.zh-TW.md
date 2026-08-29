@@ -2,6 +2,8 @@
 
 [English](README.md) | **繁體中文**
 
+**▶ [線上直接玩](https://jiowchern.github.io/snake-game/)**——免安裝,瀏覽器直接跑。
+
 這個 repo 是 [pinioncore-stateful-class-design](https://github.com/jiowchern/pinioncore-stateful-class-design)（事件驅動狀態機模式）的實戰範例：
 把一個單檔 HTML5 Canvas 貪吃蛇，從「一個 `state` 字串變數 + 散落各處的 if 分支」重構成「狀態類別 + 事件驅動轉移」。
 

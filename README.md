@@ -2,6 +2,8 @@
 
 **English** | [繁體中文](README.zh-TW.md)
 
+**▶ [Play it now](https://jiowchern.github.io/snake-game/)** — no install, runs right in the browser.
+
 This repo is a working example of [pinioncore-stateful-class-design](https://github.com/jiowchern/pinioncore-stateful-class-design) — an event-driven state machine pattern.
 It takes a single-file HTML5 Canvas snake game and refactors it from "one `state` string variable + if-branches scattered everywhere" into "state classes + event-driven transitions".
 
