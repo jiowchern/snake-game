@@ -5,6 +5,8 @@
 > Pure vanilla HTML5 Canvas + JavaScript. Zero dependencies, zero build step.
 > Both versions play identically — the only difference is **how the code manages the `ready → running → dead` lifecycle**.
 
+**🎮 Play online:** [Classic](https://jiowchern.github.io/snake-game/classic/) · [State Machine](https://jiowchern.github.io/snake-game/state-machine/) · [Landing page](https://jiowchern.github.io/snake-game/)
+
 ```
 classic/        Original: a single IIFE with one `state` string variable + if/else branches
 state-machine/  Refactored: an event-driven state machine — operations live on state objects

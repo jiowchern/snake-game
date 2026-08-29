@@ -5,6 +5,8 @@
 > 純原生 HTML5 Canvas + JavaScript,零依賴、零建置。
 > 兩個版本玩法完全相同,差別只在**程式如何管理「ready → running → dead」這件事**。
 
+**🎮 線上試玩:**[經典版](https://jiowchern.github.io/snake-game/classic/) · [狀態機版](https://jiowchern.github.io/snake-game/state-machine/) · [導覽頁](https://jiowchern.github.io/snake-game/)
+
 ```
 classic/        原版:單一 IIFE,一個 state 字串變數 + if/else 分支
 state-machine/  重構版:事件驅動狀態機,操作方法長在狀態物件上
