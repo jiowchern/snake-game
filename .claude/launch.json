@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "snake",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server", "-p", "8123", "-c-1", "C:\\Develop\\Project6"],
+      "port": 8123
+    }
+  ]
+}

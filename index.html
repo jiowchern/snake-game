@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>貪吃蛇</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --line: #21262d;
+    --text: #e6edf3;
+    --dim: #8b949e;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #f2cc60;
+    --blue: #58a6ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
+  }
+  h1 { font-size: 18px; font-weight: 600; letter-spacing: 4px; margin-bottom: 10px; color: var(--dim); }
+  #hud {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 10px;
+    font-size: 14px;
+    color: var(--dim);
+  }
+  #hud b { color: var(--text); font-variant-numeric: tabular-nums; }
+  #wrap { position: relative; width: min(674px, 94vw, calc(100vh - 140px)); }
+  canvas {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: rgba(13, 17, 23, 0.82);
+    border-radius: 6px;
+    text-align: center;
+  }
+  .overlay.hidden { display: none; }
+  .overlay .big { font-size: 26px; font-weight: 700; }
+  .overlay .sub { font-size: 15px; color: var(--dim); }
+  #legend {
+    display: flex;
+    gap: 18px;
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--dim);
+  }
+  #legend span { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>貪吃蛇</h1>
+<div id="hud">
+  <span>分數 <b id="score">0</b></span>
+  <span>最高分 <b id="best">0</b></span>
+  <span>長度 <b id="len">1</b></span>
+  <span>速度 <b id="spd">1.00x</b></span>
+</div>
+<div id="wrap">
+  <canvas id="game" width="672" height="672"></canvas>
+  <div id="startOverlay" class="overlay">
+    <div class="big">按方向鍵開始</div>
+    <div class="sub">方向鍵 / WASD 移動</div>
+  </div>
+  <div id="deadOverlay" class="overlay hidden">
+    <div class="big">遊戲結束</div>
+    <div class="sub" id="deadStats"></div>
+    <div class="sub">按 Enter 重新開始</div>
+  </div>
+</div>
+<div id="legend">
+  <span><i class="dot" style="background:var(--green)"></i>加長</span>
+  <span><i class="dot" style="background:var(--red)"></i>減短</span>
+  <span><i class="dot" style="background:var(--yellow)"></i>加速</span>
+  <span><i class="dot" style="background:var(--blue)"></i>減速</span>
+</div>
+
+<script>
+(() => {
+  const GRID = 28;
+  const CELL = 24;
+  const BASE_INTERVAL = 140; // ms per step at 1.00x
+  const MAX_STEPS_PER_FRAME = 30;
+
+  const EGG_TYPES = [
+    { key: "grow",   color: "#3fb950", weight: 55 },
+    { key: "shrink", color: "#f85149", weight: 15 },
+    { key: "fast",   color: "#f2cc60", weight: 15 },
+    { key: "slow",   color: "#58a6ff", weight: 15 },
+  ];
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const el = {
+    score: document.getElementById("score"),
+    best: document.getElementById("best"),
+    len: document.getElementById("len"),
+    spd: document.getElementById("spd"),
+    start: document.getElementById("startOverlay"),
+    dead: document.getElementById("deadOverlay"),
+    deadStats: document.getElementById("deadStats"),
+  };
+
+  let snake, dir, dirQueue, growPending, eggs, score, speed, state, acc, lastTime;
+  let best = Number(localStorage.getItem("snake.best") || 0);
+
+  function reset() {
+    const c = Math.floor(GRID / 2);
+    snake = [{ x: c, y: c }];
+    dir = null;
+    dirQueue = [];
+    growPending = 0;
+    eggs = [];
+    score = 0;
+    speed = 1;
+    state = "ready";
+    acc = 0;
+    spawnEggs();
+    el.start.classList.remove("hidden");
+    el.dead.classList.add("hidden");
+    updateHud();
+  }
+
+  function updateHud() {
+    el.score.textContent = score;
+    el.best.textContent = best;
+    el.len.textContent = snake.length;
+    el.spd.textContent = speed.toFixed(2) + "x";
+  }
+
+  function randomEggType() {
+    let r = Math.random() * 100;
+    for (const t of EGG_TYPES) {
+      if (r < t.weight) return t;
+      r -= t.weight;
+    }
+    return EGG_TYPES[0];
+  }
+
+  function spawnEggs() {
+    const target = 1 + Math.floor(Math.random() * 3); // 1~3 顆
+    const occupied = new Set(snake.map(s => s.x + "," + s.y));
+    for (const e of eggs) occupied.add(e.x + "," + e.y);
+    while (eggs.length < target) {
+      const free = [];
+      for (let y = 0; y < GRID; y++)
+        for (let x = 0; x < GRID; x++)
+          if (!occupied.has(x + "," + y)) free.push({ x, y });
+      if (!free.length) return;
+      const cell = free[Math.floor(Math.random() * free.length)];
+      occupied.add(cell.x + "," + cell.y);
+      eggs.push({ x: cell.x, y: cell.y, type: randomEggType() });
+    }
+  }
+
+  function die() {
+    state = "dead";
+    if (score > best) {
+      best = score;
+      localStorage.setItem("snake.best", best);
+    }
+    el.deadStats.textContent = `本局分數 ${score}　最高分 ${best}`;
+    el.dead.classList.remove("hidden");
+    updateHud();
+  }
+
+  function step() {
+    // 從緩衝取出下一個有效方向(長度 >= 2 禁止 180 度回頭)
+    while (dirQueue.length) {
+      const d = dirQueue.shift();
+      if (snake.length >= 2 && dir && d.x === -dir.x && d.y === -dir.y) continue;
+      if (dir && d.x === dir.x && d.y === dir.y) continue;
+      dir = d;
+      break;
+    }
+    if (!dir) return;
+
+    const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    if (head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID) return die();
+
+    // 撞自己:尾巴這一步若會移走,不算碰撞
+    const tailMoves = growPending === 0;
+    const checkLen = tailMoves ? snake.length - 1 : snake.length;
+    for (let i = 0; i < checkLen; i++)
+      if (snake[i].x === head.x && snake[i].y === head.y) return die();
+
+    snake.unshift(head);
+    if (growPending > 0) growPending--;
+    else snake.pop();
+
+    const eggIdx = eggs.findIndex(e => e.x === head.x && e.y === head.y);
+    if (eggIdx !== -1) {
+      const type = eggs[eggIdx].type.key;
+      eggs.splice(eggIdx, 1);
+      score++;
+      if (type === "grow") growPending++;
+      else if (type === "shrink") { if (snake.length > 1) snake.pop(); growPending = 0; }
+      else if (type === "fast") speed *= 1.25;
+      else if (type === "slow") speed *= 0.8;
+      spawnEggs();
+    }
+    updateHud();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.03)";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < GRID; i++) {
+      ctx.beginPath(); ctx.moveTo(i * CELL, 0); ctx.lineTo(i * CELL, canvas.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i * CELL); ctx.lineTo(canvas.width, i * CELL); ctx.stroke();
+    }
+
+    for (const e of eggs) {
+      ctx.fillStyle = e.type.color;
+      ctx.beginPath();
+      ctx.arc(e.x * CELL + CELL / 2, e.y * CELL + CELL / 2, CELL * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    for (let i = snake.length - 1; i >= 0; i--) {
+      const s = snake[i];
+      ctx.fillStyle = i === 0 ? "#ffffff" : "#7ee787";
+      const pad = i === 0 ? 2 : 3;
+      roundRect(s.x * CELL + pad, s.y * CELL + pad, CELL - pad * 2, CELL - pad * 2, 5);
+    }
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fill();
+  }
+
+  function loop(t) {
+    if (lastTime === undefined) lastTime = t;
+    const dt = t - lastTime;
+    lastTime = t;
+    if (state === "running") {
+      acc += dt;
+      const interval = BASE_INTERVAL / speed;
+      let steps = 0;
+      while (acc >= interval && steps < MAX_STEPS_PER_FRAME && state === "running") {
+        acc -= interval;
+        step();
+        steps++;
+      }
+      if (steps === MAX_STEPS_PER_FRAME) acc = 0;
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  const KEY_DIRS = {
+    ArrowUp: { x: 0, y: -1 },  KeyW: { x: 0, y: -1 },
+    ArrowDown: { x: 0, y: 1 }, KeyS: { x: 0, y: 1 },
+    ArrowLeft: { x: -1, y: 0 }, KeyA: { x: -1, y: 0 },
+    ArrowRight: { x: 1, y: 0 }, KeyD: { x: 1, y: 0 },
+  };
+
+  document.addEventListener("keydown", (ev) => {
+    if (state === "dead") {
+      if (ev.key === "Enter") reset();
+      return;
+    }
+    const d = KEY_DIRS[ev.code];
+    if (!d) return;
+    ev.preventDefault();
+    if (state === "ready") {
+      state = "running";
+      el.start.classList.add("hidden");
+    }
+    if (dirQueue.length < 3) dirQueue.push(d);
+  });
+
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
