@@ -4,7 +4,7 @@
     {
       "name": "snake",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", "-p", "8123", "-c-1", "C:\\Develop\\Project6"],
+      "runtimeArgs": ["--yes", "http-server", "-p", "8123", "-c-1", "."],
       "port": 8123
     }
   ]
