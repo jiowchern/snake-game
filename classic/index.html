@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>貪吃蛇</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<h1>貪吃蛇</h1>
+<div id="hud">
+  <span>分數 <b id="score">0</b></span>
+  <span>最高分 <b id="best">0</b></span>
+  <span>長度 <b id="len">1</b></span>
+  <span>速度 <b id="spd">1.00x</b></span>
+</div>
+<div id="wrap">
+  <canvas id="game" width="672" height="672"></canvas>
+  <div id="startOverlay" class="overlay">
+    <div class="big">按方向鍵開始</div>
+    <div class="sub">方向鍵 / WASD 移動</div>
+  </div>
+  <div id="deadOverlay" class="overlay hidden">
+    <div class="big">遊戲結束</div>
+    <div class="sub" id="deadStats"></div>
+    <div class="sub">按 Enter 重新開始</div>
+  </div>
+</div>
+<div id="legend">
+  <span><i class="dot" style="background:var(--green)"></i>加長</span>
+  <span><i class="dot" style="background:var(--red)"></i>減短</span>
+  <span><i class="dot" style="background:var(--yellow)"></i>加速</span>
+  <span><i class="dot" style="background:var(--blue)"></i>減速</span>
+</div>
+<script src="js/game.js"></script>
+</body>
+</html>

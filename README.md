@@ -1,82 +1,50 @@
-# Snake × State Machine Refactoring Example
+# 🐍 Snake Game — One Game, Two State-Management Techniques
 
 **English** | [繁體中文](README.zh-TW.md)
 
-**▶ [Play it now](https://jiowchern.github.io/snake-game/)** — no install, runs right in the browser.
+> Pure vanilla HTML5 Canvas + JavaScript. Zero dependencies, zero build step.
+> Both versions play identically — the only difference is **how the code manages the `ready → running → dead` lifecycle**.
 
-This repo is a working example of [pinioncore-stateful-class-design](https://github.com/jiowchern/pinioncore-stateful-class-design) — an event-driven state machine pattern.
-It takes a single-file HTML5 Canvas snake game and refactors it from "one `state` string variable + if-branches scattered everywhere" into "state classes + event-driven transitions".
-
-The whole game is one file, [index.html](index.html). Behavior is identical before and after — only the structure changed.
-
-## How to Run
-
-Open `index.html` directly in a browser, or serve it locally:
-
-```bash
-npx -y http-server -c-1
+```
+classic/        Original: a single IIFE with one `state` string variable + if/else branches
+state-machine/  Refactored: an event-driven state machine — operations live on state objects
 ```
 
-Arrow keys / WASD to move, Enter to restart.
+Open either folder and double-click `index.html` to play. Each version documents its own implementation:
 
-## The Smell Before Refactoring
+- [classic/README.md](classic/README.md) — full walkthrough of the state-variable version
+- [state-machine/README.md](state-machine/README.md) — full walkthrough of the state-machine version
 
-The original version managed its mode with a string variable:
+---
 
-```js
-let state; // "ready" | "running" | "dead"
-```
+## Technical Comparison
 
-This hits the **iron rule** for state machine refactoring — the same variable is **both branched on and assigned** inside a continuously-called method (the rAF loop):
+| Aspect | classic | state-machine |
+|--------|---------|---------------|
+| State representation | A `state` string (`"ready"` / `"running"` / `"dead"`) | Three classes: `ReadyState` / `RunningState` / `DeadState` |
+| State transitions | Direct assignments scattered around: `state = "running"` in the `keydown` handler, `state = "dead"` in `die()` | States only raise events (`startEvent` / `diedEvent` / `restartEvent`); the owner `Game`'s `#toXxx` methods decide where to go |
+| Operation legality | Guarded at runtime by branches: Enter is only honored `if (state === "dead")` | Guarded by structure: `restart()` exists only on `DeadState` — in the wrong state, the method is simply unreachable |
+| How outsiders learn the state | Read the `state` variable directly | Not queryable; subscribe to a `Notifier` — receive the current state's capability interface on supply, release it on unsupply |
+| Per-round data lifecycle | Global variables + a `reset()` that reassigns 9 of them in one go | All fields of `RunningState`; a fresh instance per round, the constructor guarantees clean initial values (`reset()` does not exist) |
+| Egg effects | Closures mutate globals (`speed` / `growPending` / `snake`) directly | Receive only a narrow `fx.grow()/shrink()/faster()/slower()` interface — nothing else is reachable |
+| File layout | 1 JS file, ~220 lines | 6 JS files, ~500 lines (including ~100 reusable lines of StateMachine + Notifier core) |
 
-| Location | Behavior |
-|---|---|
-| `loop()` | Branches on `state === "running"` every frame, plus a defensive re-check inside the while loop |
-| `die()` | Assigns `state = "dead"` within the `loop → step → die` call chain |
-| keydown handler | Input logic for all three states crammed together, split by ifs, assigning `state = "running"` |
-| `reset()` | Assigns `state = "ready"` and manually zeroes nine globals one by one |
+## The Essence of the Difference
 
-Transition rules were scattered across three places. Data that only makes sense while running (snake, direction queue, accumulator…) lived at global scope — forgetting to reset any one of them is a stale-field bug.
+The game logic (fixed timestep, direction buffer, tail-vacating collision rule, weighted egg drop table) is identical in both versions, character for character. They diverge on a single question: **who knows "what state we are in", and how is that knowledge used?**
 
-## The Structure After
+**The classic answer: "a variable everyone can see."** The main loop checks it every frame to decide whether to advance the logic, the keyboard listener checks it to decide what a key means, and `die()` / `reset()` assign to it. The upside is that it is direct and the code is at its shortest. The cost is that the *checks* and the *writes* are scattered along a continuously executing path — every new state or new operation means re-auditing every branch point, and missing one produces bugs that only surface at runtime, like "the snake can still turn after dying." Per-round data lives in globals, so restarting depends on `reset()` manually zeroing each field — miss one and you have a stale-value bug.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Ready
-    Ready --> Running : StartEvent(dir)
-    Running --> Dead : DiedEvent(score, snake, eggs)
-    Dead --> Ready : RestartEvent()
-```
+**The state-machine answer: "nobody knows, and nobody needs to."** The consumer (the keyboard listener) only ever holds "the capability interface supplied by the current state": during Ready the interface offers nothing but `press()`; at the instant of death that interface is revoked and replaced by a new one offering only `restart()`. An illegal operation goes from "caught by an if at runtime" to "the call cannot even be written." The transition graph is the owner's private knowledge: a state detects on its own that it is time to leave and raises an event, and `Game`'s three `#toXxx` methods *are* the entire transition table — changing the flow means touching exactly one place. The cost is more concepts and more files — for a three-state mini game this is admittedly overkill, but as states multiply or nest (say, normal/invincible inside running), this structure's extension cost stays nearly flat while classic-style branching explodes combinatorially.
 
-Four layers, all inside the `<script>` of `index.html`:
+In one sentence: **classic treats state as data and relies on discipline to keep it consistent; state-machine treats state as objects and relies on structure to make inconsistency inexpressible.**
 
-1. **State machine core** — `StateMachine` only performs the handover: `Change(next)` = old state `Disable()` → swap → new state `Enable()`. Under 20 lines.
-2. **Three state classes** — each owns its own data and input listeners:
-   - `ReadyState`: shows the start overlay, draws the initial board; a direction key → raises `StartEvent(dir)`.
-   - `RunningState`: snake, eggs, direction queue, score, speed, and step accumulator are **all initialized in the constructor**; `Update(dt)` steps and draws; death → raises `DiedEvent`, HUD changes → raise `HudEvent`.
-   - `DeadState`: shows the game-over overlay, freezes the final board; Enter → raises `RestartEvent`.
-3. **Owner (`Game`)** — holds the raw materials (best-score record, the rAF loop); the three assembly factories `_toReady / _toRunning / _toDead` **are the entire transition table**. States know nothing about each other; transition payloads (initial direction, final board, score) travel as event arguments.
-4. **Stateless utilities** — pure functions like `drawBoard` and `spawnEggs`, called by each state with its own data.
+## Common Tuning Parameters
 
-## Design Rules Applied
-
-- **Operations and data live on state classes, not on the owner.** The direction queue exists only inside `RunningState`; "calling the wrong operation in the wrong state" becomes structurally impossible.
-- **Transitions are event-driven.** A state doesn't know what the next state is — it only raises events; the owner wires them up in `_toXxx` and decides where to go. Transition *detection* happens inside the state's own `Update`; the owner never polls.
-- **A fresh instance per transition.** The constructor guarantees clean initial values, the entire `reset()` function disappears, and the stale-field bug class is eliminated at the root.
-- **Input callbacks only write data; events fire only from `Update`.** keydown just sets a flag or pushes to a queue, so transitions always happen on the main loop's synchronous timeline. Once a state is Disabled its `Update` is never called again, so late input is absorbed naturally.
-- **Each state attaches/detaches its own listeners in `Enable`/`Disable`.** The three-way if-split in the original keydown handler simply vanishes.
-
-## Before / After
-
-| | Before | After |
-|---|---|---|
-| Mode representation | `state` string + scattered ifs | Three state classes |
-| Transition rules | Spread across `loop`/`die`/keydown | Centralized in the `_toXxx` transition table |
-| State-private data | Nine globals + manual `reset()` | Constructor-initialized, reborn on every transition |
-| Input handling | One handler, three-way split | Each state manages its own listeners |
-| Illegal operations | Guarded by runtime checks | Unrepresentable by structure |
-
-## Links
-
-- The skill itself: [jiowchern/pinioncore-stateful-class-design](https://github.com/jiowchern/pinioncore-stateful-class-design)
-- C# reference implementation on NuGet: [PinionCyber.StateManagement](https://www.nuget.org/packages/PinionCyber.StateManagement)
+| Parameter | classic location | state-machine location | Effect |
+|-----------|------|------|--------|
+| `BASE_INTERVAL` | js/game.js | js/states.js | Base step interval (ms); smaller = faster |
+| `GRID` / `CELL` | js/game.js | js/board.js / js/render.js | Grid size / pixels per cell |
+| `DIR_QUEUE_MAX` | js/game.js | js/states.js | Direction buffer depth |
+| `EGG_TYPES[].weight` | js/game.js | js/board.js | Spawn probability per egg type |
+| `:root` CSS variables | css/style.css | css/style.css | Overall color theme |
