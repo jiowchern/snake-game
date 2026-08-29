@@ -1,51 +1,53 @@
-# 🐍 貪吃蛇 —— Classic 版(單檔 IIFE + 狀態變數)
+# 🐍 Snake — Classic Version (single-file IIFE + state variable)
 
-> 純原生 HTML5 Canvas + JavaScript 實作,零依賴、零建置,雙擊 `index.html` 即玩。
-> 全部邏輯集中在一個 `state` 字串變數與一份約 220 行的 `game.js`。另一種寫法見 [state-machine 版](../state-machine/README.md),兩者差異見[根目錄 README](../README.md)。
+**English** | [繁體中文](README.zh-TW.md)
+
+> Pure vanilla HTML5 Canvas + JavaScript. Zero dependencies, zero build step — double-click `index.html` to play.
+> All logic lives in one `state` string variable and a single ~220-line `game.js`. For the alternative approach see the [state-machine version](../state-machine/README.md); for a side-by-side comparison see the [root README](../README.md).
 
 | | |
 |---|---|
-| **操作** | 方向鍵 / WASD 移動,Enter 重新開始 |
-| **棋盤** | 28 × 28 格 |
-| **目標** | 吃蛋得分,別撞牆、別咬到自己 |
-| **技術** | Canvas 2D、requestAnimationFrame、localStorage |
+| **Controls** | Arrow keys / WASD to move, Enter to restart |
+| **Board** | 28 × 28 cells |
+| **Goal** | Eat eggs to score; don't hit the wall or bite yourself |
+| **Tech** | Canvas 2D, requestAnimationFrame, localStorage |
 
-四種蛋(場上隨時 1~3 顆,吃到皆 +1 分):
-🟢 加長(55%)　🔴 減短(15%)　🟡 加速 ×1.25(15%)　🔵 減速 ×0.8(15%)
+Four egg types (1–3 on the board at any time, each worth +1 point):
+🟢 Grow (55%)　🔴 Shrink (15%)　🟡 Speed up ×1.25 (15%)　🔵 Slow down ×0.8 (15%)
 
 ---
 
-## 架構總覽
+## Architecture Overview
 
 ```
-index.html ──── 版面:HUD 計分板、<canvas>、開始/結束覆蓋層、圖例
-css/style.css ─ 深色主題(GitHub Dark 風格),配色集中於 CSS 變數
-js/game.js ──── 遊戲本體,單一 IIFE,約 220 行
+index.html ──── Layout: HUD scoreboard, <canvas>, start/game-over overlays, legend
+css/style.css ─ Dark theme (GitHub Dark style), colors centralized in CSS variables
+js/game.js ──── The whole game, a single IIFE, ~220 lines
 ```
 
-`game.js` 內部的資料流向:
+Data flow inside `game.js`:
 
 ```
-鍵盤輸入 ──► dirQueue(方向緩衝,≤3)
-                  │ 每步取一個有效方向
-                  ▼
-requestAnimationFrame ──► loop(固定時間步長)──► step(遊戲邏輯)
-                  │                                │
-                  ▼                                ▼
-               draw(每幀重繪)              snake / eggs / score(狀態)
+Keyboard input ──► dirQueue (direction buffer, ≤3)
+                     │ one valid direction consumed per step
+                     ▼
+requestAnimationFrame ──► loop (fixed timestep) ──► step (game logic)
+                     │                                │
+                     ▼                                ▼
+                  draw (redraw every frame)    snake / eggs / score (state)
 ```
 
-## 核心機制解析
+## Core Mechanics
 
-### 狀態機:三種遊戲狀態
+### State machine: three game states
 
 ```
-ready ──按方向鍵──► running ──撞牆/撞自己──► dead ──Enter──► ready
+ready ──direction key──► running ──wall/self collision──► dead ──Enter──► ready
 ```
 
-`state` 變數只有三種值,切換點各自集中在一處:
+The `state` variable takes only three values, and each transition is concentrated in one place:
 
-- **`ready` → `running`**:發生在 `keydown` 監聽器裡。遊戲載入(或重置)後停在 `ready`,主迴圈照常跑但 `step()` 不會被執行;當玩家按下**第一個方向鍵**,監聽器把 `state` 改為 `"running"` 並隱藏開始覆蓋層,下一幀起主迴圈就開始累積時間、推進邏輯。
+- **`ready` → `running`**: happens in the `keydown` listener. After load (or reset) the game sits in `ready` — the main loop keeps running but `step()` is never executed. When the player presses the **first direction key**, the listener sets `state` to `"running"` and hides the start overlay; from the next frame the main loop starts accumulating time and advancing logic.
 
   ```js
   if (state === "ready") {
@@ -54,9 +56,9 @@ ready ──按方向鍵──► running ──撞牆/撞自己──► dead �
   }
   ```
 
-- **`running` → `dead`**:發生在 `step()` 內。每步算出新蛇頭後,若 `hitsWall()` 或 `hitsSelf()` 判定碰撞,呼叫 `die()`——它把 `state` 設為 `"dead"`、更新最高分並寫入 `localStorage`、顯示結束覆蓋層。主迴圈的 `while` 條件包含 `state === "running"`,所以死亡當幀立即停止補步。
+- **`running` → `dead`**: happens inside `step()`. After computing the new head each step, if `hitsWall()` or `hitsSelf()` detects a collision, `die()` is called — it sets `state` to `"dead"`, updates the best score and writes it to `localStorage`, and shows the game-over overlay. The main loop's `while` condition includes `state === "running"`, so stepping stops immediately within the same frame.
 
-- **`dead` → `ready`**:回到 `keydown` 監聽器。`dead` 狀態下只接受 **Enter**,其餘按鍵一律忽略;按下後呼叫 `reset()` 重建所有狀態(蛇回到中央、清空方向緩衝、重生蛋、`state = "ready"`),等待下一次方向鍵開局。
+- **`dead` → `ready`**: back in the `keydown` listener. In the `dead` state only **Enter** is accepted; every other key is ignored. Pressing it calls `reset()`, which rebuilds all state (snake back to center, direction buffer cleared, eggs respawned, `state = "ready"`), waiting for the next direction key to start a round.
 
   ```js
   if (state === "dead") {
@@ -65,49 +67,49 @@ ready ──按方向鍵──► running ──撞牆/撞自己──► dead �
   }
   ```
 
-值得注意的是:主迴圈 `loop()` 從不停止——三種狀態下它都持續執行並每幀重繪,`state` 只決定「要不要推進遊戲邏輯」。開始/結束畫面也不是畫在 canvas 上,而是覆蓋其上的 DOM 元素,用 CSS class 切換顯示。
+Worth noting: the main loop `loop()` never stops — it keeps running and redrawing every frame in all three states; `state` only decides "whether to advance the game logic." The start/game-over screens are not drawn on the canvas either — they are DOM elements layered on top, toggled with a CSS class.
 
-### 蛇的資料結構:座標陣列 + 頭尾操作
+### Snake data structure: coordinate array + head/tail operations
 
-蛇是 `[{x, y}, ...]`,`snake[0]` 為頭。每步:
+The snake is `[{x, y}, ...]` with `snake[0]` as the head. Each step:
 
 ```js
-snake.unshift(head);           // 新蛇頭插入開頭
+snake.unshift(head);           // insert new head at the front
 if (growPending > 0) growPending--;
-else snake.pop();              // 沒有成長額度 → 蛇尾移除
+else snake.pop();              // no growth credit → remove the tail
 ```
 
-「移動」只碰陣列頭尾兩端,「變長」則是暫時不砍尾。`O(1)` 的優雅解法,不需要移動整條蛇。
+"Moving" touches only the two ends of the array; "growing" is simply not cutting the tail for a while. An elegant `O(1)` solution — no need to shift the whole snake.
 
-### 主迴圈:固定時間步長(Fixed Timestep)
+### Main loop: fixed timestep
 
 ```js
-acc += dt;                               // 累積真實流逝時間
-while (acc >= BASE_INTERVAL / speed) {   // 每滿一個間隔
+acc += dt;                               // accumulate real elapsed time
+while (acc >= BASE_INTERVAL / speed) {   // every full interval
   acc -= interval;
-  step();                                // 推進一步邏輯
+  step();                                // advance logic one step
 }
-draw();                                  // 但畫面每幀都重繪
+draw();                                  // but redraw every frame
 ```
 
-**邏輯頻率與畫面頻率分離**:60Hz 與 144Hz 螢幕上蛇速一致;加減速蛋只需改 `speed` 倍率。另設 `MAX_STEPS_PER_FRAME = 30` 防止分頁閒置後回來瞬間狂補步數。
+**Logic rate decoupled from frame rate**: the snake moves at the same speed on 60Hz and 144Hz displays; the speed eggs only need to change the `speed` multiplier. `MAX_STEPS_PER_FRAME = 30` prevents a burst of catch-up steps after the tab returns from being idle.
 
-### 方向緩衝:快速連按不誤死
+### Direction buffer: fast key mashing won't kill you
 
-按鍵不直接改方向,而是進入 `dirQueue` 佇列(上限 3),每步僅消化一個,且過濾兩類無效輸入:
+Key presses don't change direction directly — they enter the `dirQueue` (capacity 3), one consumed per step, with two kinds of invalid input filtered out:
 
-- **180 度回頭**(長度 ≥ 2 時)——避免一步內連按兩鍵造成「原地反轉」自撞
-- **與目前方向相同**——不浪費緩衝空位
+- **180° reversal** (when length ≥ 2) — prevents two quick presses within one step from causing an "in-place reversal" self-collision
+- **Same as current direction** — don't waste a buffer slot
 
-### 碰撞判定:尾巴讓位規則
+### Collision: the tail-vacating rule
 
 ```js
 const checkLen = growPending === 0 ? snake.length - 1 : snake.length;
 ```
 
-若這一步蛇尾將移走,蛇頭走進「原尾巴格」不算碰撞——緊追自己尾巴是合法走位,符合經典規則。
+If the tail will move away this step, the head entering the "old tail cell" doesn't count as a collision — chasing your own tail closely is a legal move, per the classic rules.
 
-### 蛋系統:資料驅動的掉落表
+### Egg system: a data-driven drop table
 
 ```js
 const EGG_TYPES = [
@@ -117,22 +119,22 @@ const EGG_TYPES = [
 ];
 ```
 
-每種蛋自描述:顏色、權重、效果函式。`randomEggType()` 依權重輪盤抽選;`spawnEggs()` 先收集蛇身與現存蛋的占用格,只從空格中生成,保證不重疊。**擴充新蛋種 = 在表中加一筆資料**,其餘邏輯零改動。
+Each egg type is self-describing: color, weight, effect function. `randomEggType()` picks by weighted roulette; `spawnEggs()` first collects cells occupied by the snake and existing eggs, then spawns only into free cells, guaranteeing no overlap. **Adding a new egg type = adding one row to the table** — zero changes elsewhere.
 
-### 繪圖:每幀全量重繪
+### Rendering: full redraw every frame
 
-`draw()` 依序:清空畫布 → 半透明格線 → 蛋(圓形)→ 蛇(圓角方塊,蛇頭白色、蛇身綠色)。棋盤僅 28×28,全量重繪毫無壓力,程式碼卻簡單得多。
+`draw()` in order: clear canvas → translucent grid lines → eggs (circles) → snake (rounded squares, white head, green body). The board is only 28×28 — a full redraw costs nothing and the code stays much simpler.
 
-### 最高分:localStorage 持久化
+### Best score: persisted in localStorage
 
-死亡時若破紀錄即寫入 `localStorage`(鍵名 `snake.best`),跨瀏覽器工作階段保留。
+On death, if the record is beaten it is written to `localStorage` (key `snake.best`), surviving across browser sessions.
 
-## 常見調校參數
+## Common Tuning Parameters
 
-| 參數 | 位置 | 效果 |
-|------|------|------|
-| `BASE_INTERVAL` | game.js | 基準步進間隔(ms),越小越快 |
-| `GRID` / `CELL` | game.js | 棋盤格數 / 每格像素(canvas 尺寸 = GRID × CELL) |
-| `DIR_QUEUE_MAX` | game.js | 方向緩衝深度 |
-| `EGG_TYPES[].weight` | game.js | 各蛋種出現機率 |
-| `:root` CSS 變數 | style.css | 整體配色 |
+| Parameter | Location | Effect |
+|-----------|----------|--------|
+| `BASE_INTERVAL` | game.js | Base step interval (ms); smaller = faster |
+| `GRID` / `CELL` | game.js | Grid size / pixels per cell (canvas size = GRID × CELL) |
+| `DIR_QUEUE_MAX` | game.js | Direction buffer depth |
+| `EGG_TYPES[].weight` | game.js | Spawn probability per egg type |
+| `:root` CSS variables | style.css | Overall color theme |
