@@ -111,6 +111,13 @@
     { key: "slow",   color: "#58a6ff", weight: 15 },
   ];
 
+  const KEY_DIRS = {
+    ArrowUp: { x: 0, y: -1 },  KeyW: { x: 0, y: -1 },
+    ArrowDown: { x: 0, y: 1 }, KeyS: { x: 0, y: 1 },
+    ArrowLeft: { x: -1, y: 0 }, KeyA: { x: -1, y: 0 },
+    ArrowRight: { x: 1, y: 0 }, KeyD: { x: 1, y: 0 },
+  };
+
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
   const el = {
@@ -123,33 +130,21 @@
     deadStats: document.getElementById("deadStats"),
   };
 
-  let snake, dir, dirQueue, growPending, eggs, score, speed, state, acc, lastTime;
-  let best = Number(localStorage.getItem("snake.best") || 0);
+  // ==== 狀態機核心:Change 只做交接(舊 Disable → 新 Enable) ====
+  const EMPTY_STATE = { Enable() {}, Disable() {}, Update() {} };
 
-  function reset() {
-    const c = Math.floor(GRID / 2);
-    snake = [{ x: c, y: c }];
-    dir = null;
-    dirQueue = [];
-    growPending = 0;
-    eggs = [];
-    score = 0;
-    speed = 1;
-    state = "ready";
-    acc = 0;
-    spawnEggs();
-    el.start.classList.remove("hidden");
-    el.dead.classList.add("hidden");
-    updateHud();
+  class StateMachine {
+    constructor() { this._current = EMPTY_STATE; }
+    Change(next) {
+      this._current.Disable();
+      this._current = next;
+      this._current.Enable();
+    }
+    Update(dt) { this._current.Update(dt); }
+    Empty() { this.Change(EMPTY_STATE); }
   }
 
-  function updateHud() {
-    el.score.textContent = score;
-    el.best.textContent = best;
-    el.len.textContent = snake.length;
-    el.spd.textContent = speed.toFixed(2) + "x";
-  }
-
+  // ==== 無狀態工具 ====
   function randomEggType() {
     let r = Math.random() * 100;
     for (const t of EGG_TYPES) {
@@ -159,7 +154,7 @@
     return EGG_TYPES[0];
   }
 
-  function spawnEggs() {
+  function spawnEggs(snake, eggs) {
     const target = 1 + Math.floor(Math.random() * 3); // 1~3 顆
     const occupied = new Set(snake.map(s => s.x + "," + s.y));
     for (const e of eggs) occupied.add(e.x + "," + e.y);
@@ -175,56 +170,21 @@
     }
   }
 
-  function die() {
-    state = "dead";
-    if (score > best) {
-      best = score;
-      localStorage.setItem("snake.best", best);
-    }
-    el.deadStats.textContent = `本局分數 ${score}　最高分 ${best}`;
-    el.dead.classList.remove("hidden");
-    updateHud();
+  function createBoard() {
+    const c = Math.floor(GRID / 2);
+    const snake = [{ x: c, y: c }];
+    const eggs = [];
+    spawnEggs(snake, eggs);
+    return { snake, eggs };
   }
 
-  function step() {
-    // 從緩衝取出下一個有效方向(長度 >= 2 禁止 180 度回頭)
-    while (dirQueue.length) {
-      const d = dirQueue.shift();
-      if (snake.length >= 2 && dir && d.x === -dir.x && d.y === -dir.y) continue;
-      if (dir && d.x === dir.x && d.y === dir.y) continue;
-      dir = d;
-      break;
-    }
-    if (!dir) return;
-
-    const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
-    if (head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID) return die();
-
-    // 撞自己:尾巴這一步若會移走,不算碰撞
-    const tailMoves = growPending === 0;
-    const checkLen = tailMoves ? snake.length - 1 : snake.length;
-    for (let i = 0; i < checkLen; i++)
-      if (snake[i].x === head.x && snake[i].y === head.y) return die();
-
-    snake.unshift(head);
-    if (growPending > 0) growPending--;
-    else snake.pop();
-
-    const eggIdx = eggs.findIndex(e => e.x === head.x && e.y === head.y);
-    if (eggIdx !== -1) {
-      const type = eggs[eggIdx].type.key;
-      eggs.splice(eggIdx, 1);
-      score++;
-      if (type === "grow") growPending++;
-      else if (type === "shrink") { if (snake.length > 1) snake.pop(); growPending = 0; }
-      else if (type === "fast") speed *= 1.25;
-      else if (type === "slow") speed *= 0.8;
-      spawnEggs();
-    }
-    updateHud();
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fill();
   }
 
-  function draw() {
+  function drawBoard(snake, eggs) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     ctx.strokeStyle = "rgba(255,255,255,0.03)";
@@ -249,55 +209,197 @@
     }
   }
 
-  function roundRect(x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, r);
-    ctx.fill();
-  }
-
-  function loop(t) {
-    if (lastTime === undefined) lastTime = t;
-    const dt = t - lastTime;
-    lastTime = t;
-    if (state === "running") {
-      acc += dt;
-      const interval = BASE_INTERVAL / speed;
-      let steps = 0;
-      while (acc >= interval && steps < MAX_STEPS_PER_FRAME && state === "running") {
-        acc -= interval;
-        step();
-        steps++;
-      }
-      if (steps === MAX_STEPS_PER_FRAME) acc = 0;
+  // ==== 狀態:等待開始 ====
+  class ReadyState {
+    constructor(snake, eggs) {
+      this.StartEvent = null; // (dir) => void
+      this._snake = snake;
+      this._eggs = eggs;
+      this._pendingDir = null;
+      this._onKey = (ev) => {
+        const d = KEY_DIRS[ev.code];
+        if (!d) return;
+        ev.preventDefault();
+        // 輸入回呼只寫資料,事件一律由 Update 發出
+        if (!this._pendingDir) this._pendingDir = d;
+      };
     }
-    draw();
-    requestAnimationFrame(loop);
-  }
-
-  const KEY_DIRS = {
-    ArrowUp: { x: 0, y: -1 },  KeyW: { x: 0, y: -1 },
-    ArrowDown: { x: 0, y: 1 }, KeyS: { x: 0, y: 1 },
-    ArrowLeft: { x: -1, y: 0 }, KeyA: { x: -1, y: 0 },
-    ArrowRight: { x: 1, y: 0 }, KeyD: { x: 1, y: 0 },
-  };
-
-  document.addEventListener("keydown", (ev) => {
-    if (state === "dead") {
-      if (ev.key === "Enter") reset();
-      return;
+    Enable() {
+      el.start.classList.remove("hidden");
+      document.addEventListener("keydown", this._onKey);
     }
-    const d = KEY_DIRS[ev.code];
-    if (!d) return;
-    ev.preventDefault();
-    if (state === "ready") {
-      state = "running";
+    Disable() {
+      document.removeEventListener("keydown", this._onKey);
       el.start.classList.add("hidden");
     }
-    if (dirQueue.length < 3) dirQueue.push(d);
-  });
+    Update() {
+      if (this._pendingDir) return this.StartEvent(this._pendingDir);
+      drawBoard(this._snake, this._eggs);
+    }
+  }
 
-  reset();
-  requestAnimationFrame(loop);
+  // ==== 狀態:遊戲進行中 ====
+  class RunningState {
+    constructor(snake, eggs, dir) {
+      this.DiedEvent = null; // (score, snake, eggs) => void
+      this.HudEvent = null;  // (score, len, speed) => void
+      this._snake = snake;
+      this._eggs = eggs;
+      this._dir = dir;
+      this._dirQueue = [];
+      this._growPending = 0;
+      this._score = 0;
+      this._speed = 1;
+      this._acc = 0;
+      this._dead = false;
+      this._hudDirty = true;
+      this._onKey = (ev) => {
+        const d = KEY_DIRS[ev.code];
+        if (!d) return;
+        ev.preventDefault();
+        if (this._dirQueue.length < 3) this._dirQueue.push(d);
+      };
+    }
+    Enable() { document.addEventListener("keydown", this._onKey); }
+    Disable() { document.removeEventListener("keydown", this._onKey); }
+    Update(dt) {
+      this._acc += dt;
+      const interval = BASE_INTERVAL / this._speed;
+      let steps = 0;
+      while (this._acc >= interval && steps < MAX_STEPS_PER_FRAME && !this._dead) {
+        this._acc -= interval;
+        this._step();
+        steps++;
+      }
+      if (steps === MAX_STEPS_PER_FRAME) this._acc = 0;
+      drawBoard(this._snake, this._eggs);
+      if (this._hudDirty) {
+        this._hudDirty = false;
+        this.HudEvent(this._score, this._snake.length, this._speed);
+      }
+      if (this._dead) this.DiedEvent(this._score, this._snake, this._eggs);
+    }
+    _step() {
+      const snake = this._snake;
+      // 從緩衝取出下一個有效方向(長度 >= 2 禁止 180 度回頭)
+      while (this._dirQueue.length) {
+        const d = this._dirQueue.shift();
+        if (snake.length >= 2 && d.x === -this._dir.x && d.y === -this._dir.y) continue;
+        if (d.x === this._dir.x && d.y === this._dir.y) continue;
+        this._dir = d;
+        break;
+      }
+
+      const head = { x: snake[0].x + this._dir.x, y: snake[0].y + this._dir.y };
+      if (head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID) {
+        this._dead = true;
+        return;
+      }
+
+      // 撞自己:尾巴這一步若會移走,不算碰撞
+      const tailMoves = this._growPending === 0;
+      const checkLen = tailMoves ? snake.length - 1 : snake.length;
+      for (let i = 0; i < checkLen; i++)
+        if (snake[i].x === head.x && snake[i].y === head.y) {
+          this._dead = true;
+          return;
+        }
+
+      snake.unshift(head);
+      if (this._growPending > 0) this._growPending--;
+      else snake.pop();
+
+      const eggIdx = this._eggs.findIndex(e => e.x === head.x && e.y === head.y);
+      if (eggIdx !== -1) {
+        const type = this._eggs[eggIdx].type.key;
+        this._eggs.splice(eggIdx, 1);
+        this._score++;
+        if (type === "grow") this._growPending++;
+        else if (type === "shrink") { if (snake.length > 1) snake.pop(); this._growPending = 0; }
+        else if (type === "fast") this._speed *= 1.25;
+        else if (type === "slow") this._speed *= 0.8;
+        spawnEggs(snake, this._eggs);
+      }
+      this._hudDirty = true;
+    }
+  }
+
+  // ==== 狀態:遊戲結束 ====
+  class DeadState {
+    constructor(score, best, snake, eggs) {
+      this.RestartEvent = null; // () => void
+      this._snake = snake;
+      this._eggs = eggs;
+      this._stats = `本局分數 ${score}　最高分 ${best}`;
+      this._restart = false;
+      this._onKey = (ev) => {
+        if (ev.key === "Enter") this._restart = true;
+      };
+    }
+    Enable() {
+      el.deadStats.textContent = this._stats;
+      el.dead.classList.remove("hidden");
+      document.addEventListener("keydown", this._onKey);
+    }
+    Disable() {
+      document.removeEventListener("keydown", this._onKey);
+      el.dead.classList.add("hidden");
+    }
+    Update() {
+      if (this._restart) return this.RestartEvent();
+      drawBoard(this._snake, this._eggs);
+    }
+  }
+
+  // ==== Owner:持有原料與狀態機,_toXxx 是唯一的轉移表 ====
+  class Game {
+    constructor() {
+      this._machine = new StateMachine();
+      this._best = Number(localStorage.getItem("snake.best") || 0);
+      this._lastTime = undefined;
+    }
+    Start() {
+      this._toReady();
+      requestAnimationFrame((t) => this._loop(t));
+    }
+    _loop(t) {
+      if (this._lastTime === undefined) this._lastTime = t;
+      const dt = t - this._lastTime;
+      this._lastTime = t;
+      this._machine.Update(dt);
+      requestAnimationFrame((t2) => this._loop(t2));
+    }
+    _updateHud(score, len, speed) {
+      el.score.textContent = score;
+      el.best.textContent = this._best;
+      el.len.textContent = len;
+      el.spd.textContent = speed.toFixed(2) + "x";
+    }
+    _toReady() {
+      const { snake, eggs } = createBoard();
+      const state = new ReadyState(snake, eggs);
+      state.StartEvent = (dir) => this._toRunning(snake, eggs, dir);
+      this._updateHud(0, snake.length, 1);
+      this._machine.Change(state);
+    }
+    _toRunning(snake, eggs, dir) {
+      const state = new RunningState(snake, eggs, dir);
+      state.HudEvent = (score, len, speed) => this._updateHud(score, len, speed);
+      state.DiedEvent = (score, s, e) => this._toDead(score, s, e);
+      this._machine.Change(state);
+    }
+    _toDead(score, snake, eggs) {
+      if (score > this._best) {
+        this._best = score;
+        localStorage.setItem("snake.best", String(this._best));
+      }
+      const state = new DeadState(score, this._best, snake, eggs);
+      state.RestartEvent = () => this._toReady();
+      this._machine.Change(state);
+    }
+  }
+
+  new Game().Start();
 })();
 </script>
 </body>
