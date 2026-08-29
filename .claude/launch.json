@@ -3,9 +3,9 @@
   "configurations": [
     {
       "name": "snake",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", "-p", "8123", "-c-1", "."],
-      "port": 8123
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8137"],
+      "port": 8137
     }
   ]
 }

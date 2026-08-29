@@ -1,137 +1,48 @@
-# 🐍 貪吃蛇(Snake Game)
+# 🐍 貪吃蛇(Snake Game)—— 同一個遊戲,兩種狀態管理技術
 
-> 純原生 HTML5 Canvas + JavaScript 實作,零依賴、零建置,雙擊 `index.html` 即玩。
+> 純原生 HTML5 Canvas + JavaScript,零依賴、零建置。
+> 兩個版本玩法完全相同,差別只在**程式如何管理「ready → running → dead」這件事**。
 
-| | |
-|---|---|
-| **操作** | 方向鍵 / WASD 移動,Enter 重新開始 |
-| **棋盤** | 28 × 28 格 |
-| **目標** | 吃蛋得分,別撞牆、別咬到自己 |
-| **技術** | Canvas 2D、requestAnimationFrame、localStorage |
+```
+classic/        原版:單一 IIFE,一個 state 字串變數 + if/else 分支
+state-machine/  重構版:事件驅動狀態機,操作方法長在狀態物件上
+```
 
-四種蛋(場上隨時 1~3 顆,吃到皆 +1 分):
-🟢 加長(55%)　🔴 減短(15%)　🟡 加速 ×1.25(15%)　🔵 減速 ×0.8(15%)
+進入任一資料夾雙擊 `index.html` 即玩。各版本的實作細節見其目錄內的 README:
+
+- [classic/README.md](classic/README.md) —— 狀態變數版的完整解說
+- [state-machine/README.md](state-machine/README.md) —— 狀態機版的完整解說
 
 ---
 
-## 架構總覽
+## 技術差異對照
 
-```
-index.html ──── 版面:HUD 計分板、<canvas>、開始/結束覆蓋層、圖例
-css/style.css ─ 深色主題(GitHub Dark 風格),配色集中於 CSS 變數
-js/game.js ──── 遊戲本體,單一 IIFE,約 220 行
-```
+| 面向 | classic | state-machine |
+|------|---------|---------------|
+| 狀態表示 | `state` 字串(`"ready"` / `"running"` / `"dead"`) | 三個類別:`ReadyState` / `RunningState` / `DeadState` |
+| 狀態切換 | 散在各處直接賦值:`keydown` 裡 `state = "running"`、`die()` 裡 `state = "dead"` | 狀態只丟事件(`startEvent` / `diedEvent` / `restartEvent`),由擁有者 `Game` 的 `#toXxx` 方法決定去哪 |
+| 操作合法性 | 執行期分支把關:`if (state === "dead")` 才理 Enter | 結構把關:`restart()` 只存在於 `DeadState`,錯誤狀態下根本拿不到這個方法 |
+| 外界如何得知狀態 | 直接讀 `state` 變數 | 不可查詢;訂閱 `Notifier`,supply 時拿到當前狀態的能力介面、unsupply 時放掉 |
+| 一局資料的生命週期 | 全域變數 + `reset()` 一口氣重設 9 個 | 全是 `RunningState` 的欄位,每局 new 新實例,建構子保證乾淨初值(`reset()` 不存在) |
+| 蛋效果 | 閉包直接改寫全域 `speed` / `growPending` / `snake` | 只收窄介面 `fx.grow()/shrink()/faster()/slower()`,拿不到其他資料 |
+| 檔案結構 | 1 個 JS 檔,約 220 行 | 6 個 JS 檔,約 500 行(含約 100 行可重用的 StateMachine + Notifier 核心) |
 
-`game.js` 內部的資料流向:
+## 差異的本質
 
-```
-鍵盤輸入 ──► dirQueue(方向緩衝,≤3)
-                  │ 每步取一個有效方向
-                  ▼
-requestAnimationFrame ──► loop(固定時間步長)──► step(遊戲邏輯)
-                  │                                │
-                  ▼                                ▼
-               draw(每幀重繪)              snake / eggs / score(狀態)
-```
+兩版的遊戲邏輯(固定時間步長、方向緩衝、尾巴讓位、蛋掉落表)一字不差,分歧點只有一個問題的答案:**「現在是什麼狀態」由誰知道、怎麼用?**
 
-## 核心機制解析
+**classic 版的答案是「一個大家都看得到的變數」。** 主迴圈每幀檢查它決定要不要推進邏輯,鍵盤監聽器檢查它決定按鍵的意義,`die()` 和 `reset()` 賦值改變它。優點是直觀、程式最短;代價是狀態的「檢查」與「改寫」散落在持續執行的路徑裡,每加一種狀態或一種操作,所有分支點都要重新對一次——忘了哪一處,就是「死了還能轉向」這類執行期才爆的 bug。一局的資料也因為是全域變數,重開時得靠 `reset()` 手動逐一歸零,漏一個就是殘留值 bug。
 
-### 狀態機:三種遊戲狀態
+**state-machine 版的答案是「沒有人知道,也不需要知道」。** 消費者(鍵盤監聽器)手上只有「當前狀態供應的能力介面」:Ready 期間拿到的介面只有 `press()`,死亡瞬間介面被收回、換成只有 `restart()` 的新介面。非法操作從「執行期被 if 擋下」變成「編不出那行呼叫」。轉移圖則是擁有者的私有知識:狀態自己偵測「該離場了」就丟事件,`Game` 的三個 `#toXxx` 方法就是整張轉移表,要改流程只動這一處。代價是概念與檔案數變多——對三個狀態的小遊戲屬於殺雞用牛刀,但狀態一多、或出現巢狀狀態(例如 running 底下再分 normal/invincible)時,這套結構的擴充成本幾乎不變,而 classic 式分支會組合爆炸。
 
-```
-ready ──按方向鍵──► running ──撞牆/撞自己──► dead ──Enter──► ready
-```
+一句話總結:**classic 把狀態當資料,靠紀律維護一致性;state-machine 把狀態當物件,靠結構讓不一致無法表達。**
 
-`state` 變數只有三種值,切換點各自集中在一處:
+## 通用調校參數
 
-- **`ready` → `running`**:發生在 `keydown` 監聽器裡。遊戲載入(或重置)後停在 `ready`,主迴圈照常跑但 `step()` 不會被執行;當玩家按下**第一個方向鍵**,監聽器把 `state` 改為 `"running"` 並隱藏開始覆蓋層,下一幀起主迴圈就開始累積時間、推進邏輯。
-
-  ```js
-  if (state === "ready") {
-    state = "running";
-    el.start.classList.add("hidden");
-  }
-  ```
-
-- **`running` → `dead`**:發生在 `step()` 內。每步算出新蛇頭後,若 `hitsWall()` 或 `hitsSelf()` 判定碰撞,呼叫 `die()`——它把 `state` 設為 `"dead"`、更新最高分並寫入 `localStorage`、顯示結束覆蓋層。主迴圈的 `while` 條件包含 `state === "running"`,所以死亡當幀立即停止補步。
-
-- **`dead` → `ready`**:回到 `keydown` 監聽器。`dead` 狀態下只接受 **Enter**,其餘按鍵一律忽略;按下後呼叫 `reset()` 重建所有狀態(蛇回到中央、清空方向緩衝、重生蛋、`state = "ready"`),等待下一次方向鍵開局。
-
-  ```js
-  if (state === "dead") {
-    if (ev.key === "Enter") reset();
-    return;
-  }
-  ```
-
-值得注意的是:主迴圈 `loop()` 從不停止——三種狀態下它都持續執行並每幀重繪,`state` 只決定「要不要推進遊戲邏輯」。開始/結束畫面也不是畫在 canvas 上,而是覆蓋其上的 DOM 元素,用 CSS class 切換顯示。
-
-### 蛇的資料結構:座標陣列 + 頭尾操作
-
-蛇是 `[{x, y}, ...]`,`snake[0]` 為頭。每步:
-
-```js
-snake.unshift(head);           // 新蛇頭插入開頭
-if (growPending > 0) growPending--;
-else snake.pop();              // 沒有成長額度 → 蛇尾移除
-```
-
-「移動」只碰陣列頭尾兩端,「變長」則是暫時不砍尾。`O(1)` 的優雅解法,不需要移動整條蛇。
-
-### 主迴圈:固定時間步長(Fixed Timestep)
-
-```js
-acc += dt;                               // 累積真實流逝時間
-while (acc >= BASE_INTERVAL / speed) {   // 每滿一個間隔
-  acc -= interval;
-  step();                                // 推進一步邏輯
-}
-draw();                                  // 但畫面每幀都重繪
-```
-
-**邏輯頻率與畫面頻率分離**:60Hz 與 144Hz 螢幕上蛇速一致;加減速蛋只需改 `speed` 倍率。另設 `MAX_STEPS_PER_FRAME = 30` 防止分頁閒置後回來瞬間狂補步數。
-
-### 方向緩衝:快速連按不誤死
-
-按鍵不直接改方向,而是進入 `dirQueue` 佇列(上限 3),每步僅消化一個,且過濾兩類無效輸入:
-
-- **180 度回頭**(長度 ≥ 2 時)——避免一步內連按兩鍵造成「原地反轉」自撞
-- **與目前方向相同**——不浪費緩衝空位
-
-### 碰撞判定:尾巴讓位規則
-
-```js
-const checkLen = growPending === 0 ? snake.length - 1 : snake.length;
-```
-
-若這一步蛇尾將移走,蛇頭走進「原尾巴格」不算碰撞——緊追自己尾巴是合法走位,符合經典規則。
-
-### 蛋系統:資料驅動的掉落表
-
-```js
-const EGG_TYPES = [
-  { key: "grow",   color: "#3fb950", weight: 55, apply: () => { growPending++; } },
-  { key: "shrink", color: "#f85149", weight: 15, apply: () => { ... } },
-  ...
-];
-```
-
-每種蛋自描述:顏色、權重、效果函式。`randomEggType()` 依權重輪盤抽選;`spawnEggs()` 先收集蛇身與現存蛋的占用格,只從空格中生成,保證不重疊。**擴充新蛋種 = 在表中加一筆資料**,其餘邏輯零改動。
-
-### 繪圖:每幀全量重繪
-
-`draw()` 依序:清空畫布 → 半透明格線 → 蛋(圓形)→ 蛇(圓角方塊,蛇頭白色、蛇身綠色)。棋盤僅 28×28,全量重繪毫無壓力,程式碼卻簡單得多。
-
-### 最高分:localStorage 持久化
-
-死亡時若破紀錄即寫入 `localStorage`(鍵名 `snake.best`),跨瀏覽器工作階段保留。
-
-## 常見調校參數
-
-| 參數 | 位置 | 效果 |
-|------|------|------|
-| `BASE_INTERVAL` | game.js | 基準步進間隔(ms),越小越快 |
-| `GRID` / `CELL` | game.js | 棋盤格數 / 每格像素(canvas 尺寸 = GRID × CELL) |
-| `DIR_QUEUE_MAX` | game.js | 方向緩衝深度 |
-| `EGG_TYPES[].weight` | game.js | 各蛋種出現機率 |
-| `:root` CSS 變數 | style.css | 整體配色 |
+| 參數 | classic 位置 | state-machine 位置 | 效果 |
+|------|------|------|------|
+| `BASE_INTERVAL` | js/game.js | js/states.js | 基準步進間隔(ms),越小越快 |
+| `GRID` / `CELL` | js/game.js | js/board.js / js/render.js | 棋盤格數 / 每格像素 |
+| `DIR_QUEUE_MAX` | js/game.js | js/states.js | 方向緩衝深度 |
+| `EGG_TYPES[].weight` | js/game.js | js/board.js | 各蛋種出現機率 |
+| `:root` CSS 變數 | css/style.css | css/style.css | 整體配色 |
